@@ -1,6 +1,44 @@
-# Revolving door
+# Revolving door (with a snappy twist)
 
-A modern web player for Binary Revolution Stream (BRSTM) files
+A modern ~~web player~~ "API" for Binary Revolution Stream (BRSTM) files.
+Once upon a time, there was a built-in GUI, but it didn't suit my stylistic needs.
+
+So I pulled it out!
+
+## API Structure
+The API is accessed through `window.player`
+```json
+{
+	// functions
+	"play": function(string), // url of the BRSTM file
+	"togglePlayback": function(), // play/pause the file
+	"setLooping": function(boolean), // set looping flag
+	"seek": function(integer), // go to the sample location specified
+	// status
+	"paused": boolean,
+	"looping": boolean,
+	// 'subsystems'
+	"volume": {
+		"get": float,
+		"set": function(float) // should be between [0-1]
+	},
+	"status": {
+		"streamingDied": boolean, // the "did something explode" flag?
+		"ready": boolean,
+		"buffering": boolean
+	},
+	"progress": {
+		"currentSample": integer,
+		"totalSamples": integer,
+		"completion": float,
+		"loadedSamples": integer // really big number if done loading
+	},
+	"metadata": {
+		"sampleRate": integer,
+		"loopLocation": integer
+	}
+}
+```
 
 ## Compiling
 
