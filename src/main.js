@@ -44,8 +44,10 @@ let pauseRequest = 0;          // Pause API function will make a pauseRequest in
 let enableLoop = false;
 let streamCancel = false;
 let playAudioRunning = false;
-
+let sampleRate = 44100;        // This *should* be updated upon loading the file
+let totalSamples = 0;          // How many samples are in the file
 let samplesReady = 0;          // How many samples the streamer loaded
+let loopLocation = null;
 
 // Waits at least 50ms and until at least some samples are available for playback. This is used to hopefully avoid a crunchy start of the player.
 function waitUntilEnoughBufferedSamples() {
@@ -62,7 +64,18 @@ function waitUntilEnoughBufferedSamples() {
 }
 
 let volume = (localStorage.getItem("volumeoverride") || 1);
-function guiupd() { gui.updateState({position: playbackCurrentSample, paused, volume, loaded: samplesReady, looping: enableLoop}); }
+function guiupd() { gui.updateState({position: playbackCurrentSample, paused, volume, loaded: samplesReady, looping: enableLoop});  }
+function apiupd() { 
+    //postion 
+    //loaded 
+    //total    = state.samples
+    window.player.progress.currentSample = playbackCurrentSample;
+    window.player.progress.totalSamples = totalSamples;
+    window.player.progress.completion = playbackCurrentSample/totalSamples;
+    window.player.paused = paused;
+    window.player.looping = enableLoop;
+    window.player.volume.get = volume;
+}
 function getResampledSample(sourceSr, targetSr, sample) {
     return Math.ceil((sample / sourceSr) * targetSr);
 }
@@ -196,12 +209,14 @@ const internalApi = {
     setVolume: function(l) {
         volume=l;
         guiupd();
+        apiupd();
         if (gainNode)
             gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
     },
     seek: function(p) {
         playbackCurrentSample = Math.floor(p);
         guiupd();
+        apiupd();
     },
     pause: function() {
         if(!paused && pauseRequest == 0) {
@@ -214,10 +229,12 @@ const internalApi = {
         }
         
         guiupd();
+        apiupd();
     },
     setLoop: function(a) {
         enableLoop = a;
         guiupd();
+        apiupd();
     }
 }
 
@@ -226,7 +243,7 @@ async function startPlaying(url) { // Entry point to the
         capabilities = await browserCapabilities();
         hasInitialized = true;
         gui.runGUI(internalApi);
-        setInterval(function() { gui.updateState({loaded:samplesReady}); gui.guiUpdate(); }, 100);
+        setInterval(function() { gui.updateState({loaded:samplesReady}); gui.guiUpdate(); window.player.progress.loadedSamples=samplesReady;}, 100);
     } // Now we have!
 
     if (playAudioRunning) return;
@@ -269,7 +286,7 @@ async function startPlaying(url) { // Entry point to the
         // The promise returned by the loading method is either resolved after the download is done (legacy)
         // Or after we download enough to begin loading (modern)
 
-    audioContext = new (window.AudioContext || window.webkitAudioContext) // Because Safari is retarded
+    audioContext = new (window.AudioContext || window.webkitAudioContext) // Because Safari is a little silly
         (capabilities.sampleRate ? {sampleRate: brstm.metadata.sampleRate} : {
         }); // Do we support sampling?
     // If not, we just let the browser pick
@@ -303,10 +320,22 @@ async function startPlaying(url) { // Entry point to the
 
     gui.updateState({ready: true, samples: brstm.metadata.totalSamples});
     gui.updateState({sampleRate: brstm.metadata.sampleRate});
+
+    //set the global sampleRate so that the external api can grab it
+    totalSamples=brstm.metadata.totalSamples;
+    sampleRate=brstm.metadata.sampleRate;
+    loopLocation=brstm.metadata.loopStartSample;
+    
+    // set these once they are loaded
+    window.player.metadata.sampleRate = sampleRate
+    window.player.metadata.loopLocation = loopLocation
+    
+
     playAudioRunning = false;
     // Set the audio loop callback (called by the browser every time the internal buffer expires)
     scriptNode.onaudioprocess = function(audioProcessingEvent) {
         guiupd();
+        apiupd();
         // Get a handle for the audio buffer
         let outputBuffer = audioProcessingEvent.outputBuffer;
         if (!outputBuffer.copyToChannel) // On safari (Because it's retarded), we have to polyfill this
@@ -321,7 +350,7 @@ async function startPlaying(url) { // Entry point to the
             if(pauseRequest > 0) {
                 if(pauseRequest++ == 3) {
                     //Finalize the pause
-                    setTimeout(function() { audioContext.suspend(); paused=true; pauseRequest=0; guiupd(); }, 10);
+                    setTimeout(function() { audioContext.suspend(); paused=true; pauseRequest=0; guiupd(); apiupd(); }, 10);
                     return;
                 }
             }
@@ -331,6 +360,7 @@ async function startPlaying(url) { // Entry point to the
                 pauseRequest = 0;
                 paused = false;
                 guiupd();
+                apiupd();
             }
             
             return;
@@ -373,7 +403,7 @@ async function startPlaying(url) { // Entry point to the
                 
                 let endSamplesLength = samples[0].length;
 
-                console.log((brstm.metadata.totalSamples - playbackCurrentSample), (loadBufferSize - endSamplesLength));
+                //console.log((brstm.metadata.totalSamples - playbackCurrentSample), (loadBufferSize - endSamplesLength));
 
                 // Get enough samples to fully populate the buffer AFTER loop start point
                 let postLoopSamples = partitionedGetSamples(
@@ -469,6 +499,28 @@ async function startPlaying(url) { // Entry point to the
     gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
 }
 
+function isLoopingEnabled(){
+    return enableLoop ? true : false 
+}
+
+function isPaused(){
+    return paused ? true : false 
+}
+
+function getLoadedSamples() {
+    return samplesReady;
+}
+
 window.player = {
-    play: startPlaying
+    play: startPlaying,
+    togglePlayback:internalApi.pause,
+    seek:internalApi.seek,
+    volume: {
+        set:internalApi.setVolume
+    },
+    progress:{
+    },
+    metadata:{
+
+    }
 }
