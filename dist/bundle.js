@@ -384,7 +384,7 @@ style="stroke:#fff;stroke-width:5;stroke-linejoin:round;fill:#fff;"
         window.player.progress.completion = playbackCurrentSample/totalSamples;
         window.player.paused = paused;
         window.player.looping = enableLoop;
-        window.player.volume.get = volume;
+        window.player.volume.get = parseFloat(volume);
     }
     function getResampledSample(sourceSr, targetSr, sample) {
         return Math.ceil((sample / sourceSr) * targetSr);
@@ -801,6 +801,7 @@ style="stroke:#fff;stroke-width:5;stroke-linejoin:round;fill:#fff;"
     window.player = {
         play: startPlaying,
         togglePlayback:internalApi.pause,
+        setLoop:internalApi.setLoop,
         seek:internalApi.seek,
         volume: {
             set:internalApi.setVolume
