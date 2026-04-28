@@ -7,7 +7,7 @@ So I pulled it out!
 
 ## API Structure
 The API is accessed through `window.player`
-```json
+```
 {
 	// functions
 	"play": function(string), // url of the BRSTM file
