@@ -7,7 +7,7 @@ So I pulled it out!
 
 ## API Structure
 The API is accessed through `window.player`
-```json
+```
 {
 	// functions
 	"play": function(string), // url of the BRSTM file
@@ -17,6 +17,7 @@ The API is accessed through `window.player`
 	// status
 	"paused": boolean,
 	"looping": boolean,
+	"loops": integer,
 	// 'subsystems'
 	"volume": {
 		"get": float,

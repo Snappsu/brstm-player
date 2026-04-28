@@ -3,7 +3,9 @@
 const browserCapabilities = require('./browserCapabilities');
 const unlock = require('./webAudioUnlock');
 const libbrstm = require('brstm');
-const { STREAMING_MIN_RESPONSE } = require('./configProvider');
+const {
+    STREAMING_MIN_RESPONSE
+} = require('./configProvider');
 const copyToChannelPolyfill = require('./copyToChannelPolyfill');
 import resampler from './resampler';
 const sleep = timeout => new Promise(resolve => setTimeout(resolve, timeout));
@@ -28,35 +30,36 @@ function partitionedGetSamples(brstm, start, size) {
 }
 
 // Player state variables
-let hasInitialized = false;    // If we measured browser capabilities yet
-let capabilities = null;       // Capabilities of our browser
-let audioContext = null;       // WebAudio Audio context
-let scriptNode = null;         // WebAudio script node
-let gainNode = null;           // WebAudio gain node
-let fullyLoaded = true;        // Set to false if file is still streaming
-let loadState = 0;             // How many bytes we loaded
+let hasInitialized = false; // If we measured browser capabilities yet
+let capabilities = null; // Capabilities of our browser
+let audioContext = null; // WebAudio Audio context
+let scriptNode = null; // WebAudio script node
+let gainNode = null; // WebAudio gain node
+let fullyLoaded = true; // Set to false if file is still streaming
+let loadState = 0; // How many bytes we loaded
 let playbackCurrentSample = 0; // Current sample of playback (in the LibBRSTM)
-let brstm = null;              // Instance of LibBRSTM
-let brstmBuffer = null;        // Memory view shared with LibBRSTM
+let brstm = null; // Instance of LibBRSTM
+let brstmBuffer = null; // Memory view shared with LibBRSTM
 let paused = false;
-let pauseRequest = 0;          // Pause API function will make a pauseRequest instead of pausing/resuming directly, in order to allow the audio processor to execute it cleanly.
+let pauseRequest = 0; // Pause API function will make a pauseRequest instead of pausing/resuming directly, in order to allow the audio processor to execute it cleanly.
 let enableLoop = false;
 let streamCancel = false;
 let playAudioRunning = false;
-let sampleRate = 44100;        // This *should* be updated upon loading the file
-let totalSamples = 0;          // How many samples are in the file
-let samplesReady = 0;          // How many samples the streamer loaded
+let sampleRate = 44100; // This *should* be updated upon loading the file
+let totalSamples = 0; // How many samples are in the file
+let samplesReady = 0; // How many samples the streamer loaded
 let loopLocation = null;
 let buffering = false;
+let loops = 0;
 
 // Waits at least 50ms and until at least some samples are available for playback. This is used to hopefully avoid a crunchy start of the player.
 function waitUntilEnoughBufferedSamples() {
     return new Promise(async (resolve) => {
         // If more than a second passes, we will bail out and let the player handle the problem of buffering on its own.
         let iterations = 0;
-        while(iterations++ < 20) {
+        while (iterations++ < 20) {
             //   ----------------------------------      \/ - Amount of buffered audio seconds required.
-            if(iterations > 1 && samplesReady > brstm.metadata.sampleRate * 2.3) break;
+            if (iterations > 1 && samplesReady > brstm.metadata.sampleRate * 2.3) break;
             await sleep(50);
         }
         resolve();
@@ -64,14 +67,17 @@ function waitUntilEnoughBufferedSamples() {
 }
 
 let volume = (localStorage.getItem("volumeoverride") || 1);
-function apiupd() { 
+
+function apiupd() {
     window.player.progress.currentSample = playbackCurrentSample;
     window.player.progress.totalSamples = totalSamples; // should be moved to a place where it's only called once
-    window.player.progress.completion = playbackCurrentSample/totalSamples;
+    window.player.progress.completion = playbackCurrentSample / totalSamples;
     window.player.paused = paused;
     window.player.looping = enableLoop;
     window.player.volume.get = parseFloat(volume);
+    window.player.loops = loops;
 }
+
 function getResampledSample(sourceSr, targetSr, sample) {
     return Math.ceil((sample / sourceSr) * targetSr);
 }
@@ -88,7 +94,7 @@ async function loadSongLegacy(url) { // Old song loading logic
 }
 
 function awaitMessage(content) {
-    return new Promise(function(resolve) {
+    return new Promise(function (resolve) {
         function handler(c) {
             if (c.data === content && c.isTrusted) {
                 window.removeEventListener("message", handler);
@@ -107,7 +113,9 @@ function loadSongStreaming(url) { // New, fancy song loading logic
         try {
             resp = await fetch(url);
             reader = (await resp.body).getReader(); // Initialize reader
-        } catch(e) { return reject(e); }
+        } catch (e) {
+            return reject(e);
+        }
         brstmBuffer = new ArrayBuffer(parseInt(resp.headers.get("content-length")));
         let bufferView = new Uint8Array(brstmBuffer); // Create shared memory view
         let writeOffset = 0; // How much we read
@@ -116,11 +124,11 @@ function loadSongStreaming(url) { // New, fancy song loading logic
         samplesReady = 0;
         fullyLoaded = false; // We are now streaming
         streamCancel = false;
-        while(true) {
+        while (true) {
             let d;
             try {
                 d = await reader.read(); // Read next chunk
-            } catch(e) {
+            } catch (e) {
                 if (resolved) {
                     window.player.status.streamingDied = true
                     window.player.status.buffering = false
@@ -147,20 +155,20 @@ function loadSongStreaming(url) { // New, fancy song loading logic
                     // Byte order. 0 = LE, 1 = BE.
                     let endian = 0;
                     // Read byte order mark. 0x04
-                    let bom = (bufferView[0x04]*256 + bufferView[0x05]);
+                    let bom = (bufferView[0x04] * 256 + bufferView[0x05]);
                     if (bom == 0xFEFF) {
                         endian = 1;
                     }
 
                     // Read the audio offset. 0x70
-                    if(endian == 1) {
-                        brstmHeaderSize = (bufferView[0x70]*16777216 + bufferView[0x71]*65536 + bufferView[0x72]*256 + bufferView[0x73]);
+                    if (endian == 1) {
+                        brstmHeaderSize = (bufferView[0x70] * 16777216 + bufferView[0x71] * 65536 + bufferView[0x72] * 256 + bufferView[0x73]);
                     } else {
-                        brstmHeaderSize = (bufferView[0x70] + bufferView[0x71]*256 + bufferView[0x72]*65536 + bufferView[0x73]*16777216);
+                        brstmHeaderSize = (bufferView[0x70] + bufferView[0x71] * 256 + bufferView[0x72] * 65536 + bufferView[0x73] * 16777216);
                     }
                     // If the offset in the file turned out to be 0 for some reason or seems to small,
                     // then fall back to the default minimum size, though the file is very likely to be invalid in this case.
-                    if(brstmHeaderSize < 0x90) {
+                    if (brstmHeaderSize < 0x90) {
                         brstmHeaderSize = STREAMING_MIN_RESPONSE;
                     }
                 }
@@ -171,7 +179,7 @@ function loadSongStreaming(url) { // New, fancy song loading logic
                         brstm = new libbrstm.Brstm(brstmBuffer);
                         resolve();
                         resolved = true;
-                    } catch(e) {
+                    } catch (e) {
                         reject(e);
                         return;
                     }
@@ -189,7 +197,7 @@ function loadSongStreaming(url) { // New, fancy song loading logic
                         brstm = new libbrstm.Brstm(brstmBuffer);
                         resolve();
                         resolved = true;
-                    } catch(e) {
+                    } catch (e) {
                         reject(e);
                         return;
                     }
@@ -204,28 +212,27 @@ function loadSongStreaming(url) { // New, fancy song loading logic
 }
 
 const internalApi = {
-    setVolume: function(l) {
-        volume=l;
+    setVolume: function (l) {
+        volume = l;
         apiupd();
         if (gainNode)
             gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
     },
-    seek: function(p) {
+    seek: function (p) {
         playbackCurrentSample = Math.floor(p);
         apiupd();
     },
-    pause: function() {
-        if(!paused && pauseRequest == 0) {
+    pause: function () {
+        if (!paused && pauseRequest == 0) {
             pauseRequest = 1;
             //With a pause request, the audio callback itself will eventually suspend the audioContext.
-        }
-        else if(paused && pauseRequest == 0) {
+        } else if (paused && pauseRequest == 0) {
             pauseRequest = -1; //That is an UNpausing request.
             audioContext.resume();
         }
         apiupd();
     },
-    setLoop: function(a) {
+    setLoop: function (a) {
         enableLoop = a;
         apiupd();
     }
@@ -238,9 +245,11 @@ async function startPlaying(url) { // Entry point to the
         //this were the gui was originally initialized
 
         //Polling function
-        setInterval(function() {
-             apiupd()
-             window.player.progress.loadedSamples=samplesReady;}, 100);
+        setInterval(function () {
+            onUpdateFunction();
+            apiupd();
+            window.player.progress.loadedSamples = samplesReady;
+        }, 100);
     } // Now we have!
 
     if (playAudioRunning) return;
@@ -258,12 +267,12 @@ async function startPlaying(url) { // Entry point to the
     }
 
     playbackCurrentSample = 0; // Set the state for playback
-    paused = false;            // Unpause it
-    pauseRequest = -1;         // Give it an unpause request, so it fills the first initial audio buffer with silence.
+    paused = false; // Unpause it
+    pauseRequest = -1; // Give it an unpause request, so it fills the first initial audio buffer with silence.
 
     try {
         await (capabilities.streaming ? loadSongStreaming : loadSongLegacy)(url); // Begin loading based on capabilities
-    } catch(e) {
+    } catch (e) {
         window.player.status.streamingDied = true
         window.player.status.ready = true
         window.player.status.buffering = false
@@ -271,12 +280,13 @@ async function startPlaying(url) { // Entry point to the
         playAudioRunning = false;
         return;
     }
-        // The promise returned by the loading method is either resolved after the download is done (legacy)
-        // Or after we download enough to begin loading (modern)
+    // The promise returned by the loading method is either resolved after the download is done (legacy)
+    // Or after we download enough to begin loading (modern)
 
-    audioContext = new (window.AudioContext || window.webkitAudioContext) // Because Safari is a little silly
-        (capabilities.sampleRate ? {sampleRate: brstm.metadata.sampleRate} : {
-        }); // Do we support sampling?
+    audioContext = new(window.AudioContext || window.webkitAudioContext) // Because Safari is a little silly
+    (capabilities.sampleRate ? {
+        sampleRate: brstm.metadata.sampleRate
+    } : {}); // Do we support sampling?
     // If not, we just let the browser pick
 
     enableLoop = (brstm.metadata.loopFlag === 1) // Set the loop settings respective to the loop flag in brstm file
@@ -288,7 +298,7 @@ async function startPlaying(url) { // Entry point to the
 
     // Process bufferSize
     let bufferSize = scriptNode.bufferSize;
-    
+
     // If we have to resample, the buffer that we get from the BRSTM will be different size.
     bufferSize = capabilities.sampleRate ? bufferSize : getResampledSample(
         audioContext.sampleRate,
@@ -296,12 +306,12 @@ async function startPlaying(url) { // Entry point to the
         bufferSize
     );
     let loadBufferSize = bufferSize;
-    
+
     // If we resample, we need to also fetch some extra samples to prevent audio glitches
     if (!capabilities.sampleRate) {
         loadBufferSize += 20;
     }
-    
+
     if (capabilities.streaming) {
         await waitUntilEnoughBufferedSamples(); // In streaming sometimes the start is slightly crunchy, this should fix it.
     }
@@ -309,49 +319,54 @@ async function startPlaying(url) { // Entry point to the
     window.player.status.ready = true
 
     //set the global sampleRate so that the external api can grab it
-    totalSamples=brstm.metadata.totalSamples;
-    sampleRate=brstm.metadata.sampleRate;
-    loopLocation=brstm.metadata.loopStartSample;
-    
+    totalSamples = brstm.metadata.totalSamples;
+    sampleRate = brstm.metadata.sampleRate;
+    loopLocation = brstm.metadata.loopStartSample;
+
     // set these once they are loaded
     window.player.metadata.sampleRate = sampleRate
     window.player.metadata.loopLocation = loopLocation
-    
+
 
     playAudioRunning = false;
     // Set the audio loop callback (called by the browser every time the internal buffer expires)
-    scriptNode.onaudioprocess = function(audioProcessingEvent) {
+    scriptNode.onaudioprocess = function (audioProcessingEvent) {
         apiupd();
         // Get a handle for the audio buffer
         let outputBuffer = audioProcessingEvent.outputBuffer;
         if (!outputBuffer.copyToChannel) // On safari (Because it's retarded), we have to polyfill this
             outputBuffer.copyToChannel = copyToChannelPolyfill;
-        
+
         // If there is a pause request we first make sure to clean up the buffer, before finalizing the pause.
         // If we are paused, we just bail out and return with just zeros
         if (pauseRequest != 0 || paused) {
             outputBuffer.copyToChannel(new Float32Array(scriptNode.bufferSize).fill(0), 0);
             outputBuffer.copyToChannel(new Float32Array(scriptNode.bufferSize).fill(0), 1);
-            
-            if(pauseRequest > 0) {
-                if(pauseRequest++ == 3) {
+
+            if (pauseRequest > 0) {
+                if (pauseRequest++ == 3) {
                     //Finalize the pause
-                    setTimeout(function() { audioContext.suspend(); paused=true; pauseRequest=0;  apiupd(); }, 10);
+                    setTimeout(function () {
+                        audioContext.suspend();
+                        paused = true;
+                        pauseRequest = 0;
+                        apiupd();
+                    }, 10);
                     return;
                 }
             }
-            
-            if(pauseRequest < 0) {
+
+            if (pauseRequest < 0) {
                 //Finalize unpausing.
                 pauseRequest = 0;
                 paused = false;
                 apiupd();
             }
-            
+
             return;
         }
-        
-        
+
+
         // Not enough samples override
         if ((playbackCurrentSample + bufferSize + 1024) > samplesReady) {
             // override, return early.
@@ -364,7 +379,7 @@ async function startPlaying(url) { // Entry point to the
         window.player.status.buffering = false
 
         let samples; // Declare the variable for samples
-                     // This will be filled using the below code for handling looping
+        // This will be filled using the below code for handling looping
         if ((playbackCurrentSample + loadBufferSize) < brstm.metadata.totalSamples) { // Standard codepath if no loop
             // Populate samples with enough that we can just play it (or resample + play it) without glitches
             samples = partitionedGetSamples(
@@ -385,7 +400,7 @@ async function startPlaying(url) { // Entry point to the
                     playbackCurrentSample,
                     (brstm.metadata.totalSamples - playbackCurrentSample)
                 );
-                
+
                 let endSamplesLength = samples[0].length;
 
                 //console.log((brstm.metadata.totalSamples - playbackCurrentSample), (loadBufferSize - endSamplesLength));
@@ -407,6 +422,9 @@ async function startPlaying(url) { // Entry point to the
 
                 // Set to loopStartPoint + length of second buffer (recalculated to not set extra resampling samples)
                 playbackCurrentSample = brstm.metadata.loopStartSample + bufferSize - endSamplesLength;
+
+                // Add one to the loops count 
+                loops = loops+1
             } else {
                 // No looping
                 // Get enough samples until EOF
@@ -426,6 +444,7 @@ async function startPlaying(url) { // Entry point to the
                 // Tell the player that on the next iteration we are at the start and paused
                 playbackCurrentSample = 0;
                 pauseRequest = 1;
+                loops = 0
             }
         }
 
@@ -484,26 +503,31 @@ async function startPlaying(url) { // Entry point to the
     gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
 }
 
-function isLoopingEnabled(){
-    return enableLoop ? true : false 
+function isLoopingEnabled() {
+    return enableLoop ? true : false
 }
 
-function isPaused(){
-    return paused ? true : false 
+function isPaused() {
+    return paused ? true : false
+}
+
+var onUpdateFunction = null;
+
+function setOnUpdate(func) {
+    onUpdateFunction = func
+    window.player.metadata.updateFunction = onUpdateFunction
 }
 
 window.player = {
     play: startPlaying,
-    togglePlayback:internalApi.pause,
-    setLoop:internalApi.setLoop,
-    seek:internalApi.seek,
+    togglePlayback: internalApi.pause,
+    setLoop: internalApi.setLoop,
+    seek: internalApi.seek,
+    setOnUpdate: setOnUpdate,
     volume: {
-        set:internalApi.setVolume
+        set: internalApi.setVolume
     },
     status: {},
-    progress:{
-    },
-    metadata:{
-
-    }
+    progress: {},
+    metadata: {}
 }
