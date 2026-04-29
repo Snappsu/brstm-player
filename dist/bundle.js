@@ -536,14 +536,20 @@ style="stroke:#fff;stroke-width:5;stroke-linejoin:round;fill:#fff;"
             playbackCurrentSample = Math.floor(p);
             apiupd();
         },
-        pause: function () {
-            if (!paused && pauseRequest == 0) {
-                pauseRequest = 1;
-                //With a pause request, the audio callback itself will eventually suspend the audioContext.
-            } else if (paused && pauseRequest == 0) {
-                pauseRequest = -1; //That is an UNpausing request.
-                audioContext.resume();
+        pause: function (setPaused = null) {
+            if (setPaused == null) {
+                if (!paused && pauseRequest == 0) {
+                    pauseRequest = 1;
+                    //With a pause request, the audio callback itself will eventually suspend the audioContext.
+                } else if (paused && pauseRequest == 0) {
+                    pauseRequest = -1; //That is an UNpausing request.
+                    audioContext.resume();
+                }
+            } else {
+                if (setPaused && pauseRequest == 0) pauseRequest = 1; 
+                else { pauseRequest = -1; audioContext.resume(); }
             }
+
             apiupd();
         },
         setLoop: function (a) {
@@ -738,7 +744,7 @@ style="stroke:#fff;stroke-width:5;stroke-linejoin:round;fill:#fff;"
                     playbackCurrentSample = brstm.metadata.loopStartSample + bufferSize - endSamplesLength;
 
                     // Add one to the loops count 
-                    loops = loops+1;
+                    loops = loops + 1;
                 } else {
                     // No looping
                     // Get enough samples until EOF
